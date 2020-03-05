@@ -18,15 +18,16 @@ from yolo3.utils import letterbox_image
 import os
 from keras.utils import multi_gpu_model
 
+
 class YOLO(object):
     _defaults = {
         "model_path": 'model_data/yolo.h5',
         "anchors_path": 'model_data/yolo_anchors.txt',
         "classes_path": 'model_data/coco_classes.txt',
-        "score" : 0.3,
-        "iou" : 0.45,
-        "model_image_size" : (416, 416),
-        "gpu_num" : 1,
+        "score": 0.3,
+        "iou": 0.45,
+        "model_image_size": (416, 416),
+        "gpu_num": 1,
     }
 
     @classmethod
@@ -37,8 +38,8 @@ class YOLO(object):
             return "Unrecognized attribute name '" + n + "'"
 
     def __init__(self, **kwargs):
-        self.__dict__.update(self._defaults) # set up default values
-        self.__dict__.update(kwargs) # and update with user overrides
+        self.__dict__.update(self._defaults)  # set up default values
+        self.__dict__.update(kwargs)  # and update with user overrides
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
@@ -63,18 +64,24 @@ class YOLO(object):
         assert model_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
         # Load model, or construct model and load weights.
-        num_anchors = len(self.anchors)
-        num_classes = len(self.class_names)
-        is_tiny_version = num_anchors==6 # default setting
+        num_anchors = len(self.anchors) #默认是9个
+        num_classes = len(self.class_names) #默认是20类
+        is_tiny_version = num_anchors == 6  # default setting
         try:
+            # 尝试直接加载模型
             self.yolo_model = load_model(model_path, compile=False)
         except:
-            self.yolo_model = tiny_yolo_body(Input(shape=(None,None,3)), num_anchors//2, num_classes) \
-                if is_tiny_version else yolo_body(Input(shape=(None,None,3)), num_anchors//3, num_classes)
-            self.yolo_model.load_weights(self.model_path) # make sure model, anchors and classes match
+            # 若果try失败，
+            # 如果is_tiny_version为真，通过tiny_yolo_body定义较小的yolo模型（没有权重）
+            # 如果is_tiny_version为假，通过yolo_body定义正常的yolo模型（没有权重）
+            self.yolo_model = tiny_yolo_body(Input(shape=(None, None, 3)), num_anchors // 2, num_classes) \
+                if is_tiny_version else yolo_body(Input(shape=(None, None, 3)), num_anchors // 3, num_classes)
+
+            # load_weights是keras定义的模型自带的函数，可以加载模型参数，注意这个模型参数结构与该模型结构一样
+            self.yolo_model.load_weights(self.model_path)  # make sure model, anchors and classes match
         else:
             assert self.yolo_model.layers[-1].output_shape[-1] == \
-                num_anchors/len(self.yolo_model.output) * (num_classes + 5), \
+                   num_anchors / len(self.yolo_model.output) * (num_classes + 5), \
                 'Mismatch between model and given anchor and class sizes'
 
         print('{} model, anchors, and classes loaded.'.format(model_path))
@@ -91,20 +98,22 @@ class YOLO(object):
         np.random.seed(None)  # Reset seed to default.
 
         # Generate output tensor targets for filtered bounding boxes.
-        self.input_image_shape = K.placeholder(shape=(2, ))
-        if self.gpu_num>=2:
+        self.input_image_shape = K.placeholder(shape=(2,))
+        if self.gpu_num >= 2:
             self.yolo_model = multi_gpu_model(self.yolo_model, gpus=self.gpu_num)
         boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors,
-                len(self.class_names), self.input_image_shape,
-                score_threshold=self.score, iou_threshold=self.iou)
+                                           len(self.class_names), self.input_image_shape,
+                                           score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
+    # yolo检测图片
     def detect_image(self, image):
         start = timer()
 
+        # model_image_size是不是模型输入的图片大小
         if self.model_image_size != (None, None):
-            assert self.model_image_size[0]%32 == 0, 'Multiples of 32 required'
-            assert self.model_image_size[1]%32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[0] % 32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[1] % 32 == 0, 'Multiples of 32 required'
             boxed_image = letterbox_image(image, tuple(reversed(self.model_image_size)))
         else:
             new_image_size = (image.width - (image.width % 32),
@@ -116,6 +125,10 @@ class YOLO(object):
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
 
+        # python是一种动态语言，self.yolo_model在之前的方法中被定义，在此可以引用？是的，实验证明可以的
+        # 在__init__()中通过self.generate()定义了self.boxes, self.scores, self.classes，在此处就直接引用这些变量
+        # 所以算法的主要部分就变成了self.generate()函数了
+        # 这个sess.run就运行了yolo网络对输入的image_data进行检测，输出box，score，classess结果
         out_boxes, out_scores, out_classes = self.sess.run(
             [self.boxes, self.scores, self.classes],
             feed_dict={
@@ -126,11 +139,12 @@ class YOLO(object):
 
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
 
+        # 后面的这些都是画出结果，对结果做一些小处理
         font = ImageFont.truetype(font='font/FiraMono-Medium.otf',
-                    size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
+                                  size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
         thickness = (image.size[0] + image.size[1]) // 300
 
-        for i, c in reversed(list(enumerate(out_classes))):
+        for i, c in reversed(list(enumerate(out_classes))): # reversed返回一个输入list的反向迭代器
             predicted_class = self.class_names[c]
             box = out_boxes[i]
             score = out_scores[i]
@@ -146,7 +160,7 @@ class YOLO(object):
             right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
             print(label, (left, top), (right, bottom))
 
-            if top - label_size[1] >= 0:
+            if top - label_size[1] >= 0:    #标签文字
                 text_origin = np.array([left, top - label_size[1]])
             else:
                 text_origin = np.array([left, top + 1])
@@ -169,15 +183,23 @@ class YOLO(object):
     def close_session(self):
         self.sess.close()
 
+
 def detect_video(yolo, video_path, output_path=""):
+    '''
+    通过每一帧调用yolo.detect_image(image)来进行检测，并输出视频结果
+    :param yolo:
+    :param video_path:
+    :param output_path:
+    :return:
+    '''
     import cv2
     vid = cv2.VideoCapture(video_path)
     if not vid.isOpened():
         raise IOError("Couldn't open webcam or video")
-    video_FourCC    = int(vid.get(cv2.CAP_PROP_FOURCC))
-    video_fps       = vid.get(cv2.CAP_PROP_FPS)
-    video_size      = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                        int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    video_FourCC = int(vid.get(cv2.CAP_PROP_FOURCC))
+    video_fps = vid.get(cv2.CAP_PROP_FPS)
+    video_size = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                  int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     isOutput = True if output_path != "" else False
     if isOutput:
         print("!!! TYPE:", type(output_path), type(video_FourCC), type(video_fps), type(video_size))
@@ -209,4 +231,3 @@ def detect_video(yolo, video_path, output_path=""):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
     yolo.close_session()
-

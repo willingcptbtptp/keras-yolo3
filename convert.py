@@ -80,8 +80,13 @@ def _main(args):
     print('Weights Header: ', major, minor, revision, seen)
 
     print('Parsing Darknet config.')
+
+    # 读取yolov3最开始的配置文件，将其中重名的section添加序号修改为不同名称
+    # 该函数返回一个可迭代的object
     unique_config_file = unique_config_sections(config_path)
     cfg_parser = configparser.ConfigParser()
+
+    # 通过read_file（）读取file-like形式的object配置文件，就是上述修改section名称之后的文件
     cfg_parser.read_file(unique_config_file)
 
     print('Creating Keras model.')
@@ -132,8 +137,9 @@ def _main(args):
 
                 bn_weight_list = [
                     bn_weights[0],  # scale gamma
-                    conv_bias,  # shift beta
-                    bn_weights[1],  # running mean
+                    conv_bias,  # shift beta，这个不是第一个卷积层的bias吗？为什么当做BN层的beta
+                    bn_weights[1],  # running mean，训练的时候BN层均值和方差是随样本变化的，但是在测试的时候，
+                                    # 单样本输入，均值和方差用的是整个训练集在每个BN层的均值和方差
                     bn_weights[2]  # running var
                 ]
 
@@ -150,7 +156,7 @@ def _main(args):
             conv_weights = np.transpose(conv_weights, [2, 3, 1, 0])
             conv_weights = [conv_weights] if batch_normalize else [
                 conv_weights, conv_bias
-            ]
+            ]   #也就是说，有BN层的时候卷积核是没有bias的，conv_bias存储的是BN层的beta值
 
             # Handle activation.
             act_fn = None
@@ -162,7 +168,7 @@ def _main(args):
                         activation, section))
 
             # Create Conv2D layer
-            if stride>1:
+            if stride>1:    # 该网络中除了stride=1的步长，剩下的就是stride=2的步长，也就是下采样2倍
                 # Darknet uses left and top padding instead of 'same' mode
                 prev_layer = ZeroPadding2D(((1,0),(1,0)))(prev_layer)
             conv_layer = (Conv2D(
@@ -170,7 +176,7 @@ def _main(args):
                 strides=(stride, stride),
                 kernel_regularizer=l2(weight_decay),
                 use_bias=not batch_normalize,
-                weights=conv_weights,
+                weights=conv_weights,       # 在层层调用的init函数的**kwargs中找到weights关键字，将其初始化为卷积核权重
                 activation=act_fn,
                 padding=padding))(prev_layer)
 
@@ -182,11 +188,14 @@ def _main(args):
             if activation == 'linear':
                 all_layers.append(prev_layer)
             elif activation == 'leaky':
-                act_layer = LeakyReLU(alpha=0.1)(prev_layer)
+                act_layer = LeakyReLU(alpha=0.1)(prev_layer)    #leakyReLu函数，alpha表示小于0部分的斜率
                 prev_layer = act_layer
                 all_layers.append(act_layer)
 
-        elif section.startswith('route'):
+        elif section.startswith('route'):   # 表示concatenate结构，两层并联在一起输出的层
+            # 在配置文件中route有两种，一种是只有单层layer的，一个是有两层layer的，
+            # 单层layer的表示该层已经到达输出层，需要向上回溯若干层，再做上采样，用于与其它层concatenate然后在另一个尺寸输出
+            # 两侧layer的表示该层属于concatenate层，这两层需要并联在一起输出
             ids = [int(i) for i in cfg_parser[section]['layers'].split(',')]
             layers = [all_layers[i] for i in ids]
             if len(layers) > 1:
@@ -209,7 +218,7 @@ def _main(args):
                     padding='same')(prev_layer))
             prev_layer = all_layers[-1]
 
-        elif section.startswith('shortcut'):
+        elif section.startswith('shortcut'):    # shortcut表示残差结构中的add层，将当前层与与2层前相加
             index = int(cfg_parser[section]['from'])
             activation = cfg_parser[section]['activation']
             assert activation == 'linear', 'Only linear activation supported.'
@@ -236,7 +245,7 @@ def _main(args):
 
     # Create and save model.
     if len(out_index)==0: out_index.append(len(all_layers)-1)
-    model = Model(inputs=input_layer, outputs=[all_layers[i] for i in out_index])
+    model = Model(inputs=input_layer, outputs=[all_layers[i] for i in out_index])   # out_index是三个输出层序号
     print(model.summary())
     if args.weights_only:
         model.save_weights('{}'.format(output_path))
