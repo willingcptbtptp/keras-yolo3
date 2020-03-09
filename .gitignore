@@ -5,6 +5,9 @@
 logs/
 *_test.py
 
+# added by lujian
+.idea
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
