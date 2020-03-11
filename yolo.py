@@ -38,8 +38,17 @@ class YOLO(object):
             return "Unrecognized attribute name '" + n + "'"
 
     def __init__(self, **kwargs):
-        self.__dict__.update(self._defaults)  # set up default values
-        self.__dict__.update(kwargs)  # and update with user overrides
+        # self.__dict__.update()是一种自带循环的更新字典的操作
+        self.__dict__.update(self._defaults)  # set up default values，首先按照默认值更新self的字典
+        self.__dict__.update(kwargs)  # and update with user overrides，然后按照传入的参数（也就是命令行输入的参数）更新self字典
+                                    # 然而_defaults中的模型路径是“model_path”，而命令行写入的是“model”
+                                    # 所以，这样是无法更新model_path的。
+        # 因此要进行修改，在这里直接对这几个参数进行赋值
+        self.model_path=kwargs['model']
+        self.anchors_path=kwargs['anchors']
+        self.classes_path=kwargs['classes']
+
+        # class_names等参数都是从self.classes_path路径中读取到的，那么self.classes_path是在哪个地方被修改？
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
@@ -80,6 +89,7 @@ class YOLO(object):
             # load_weights是keras定义的模型自带的函数，可以加载模型参数，注意这个模型参数结构与该模型结构一样
             self.yolo_model.load_weights(self.model_path)  # make sure model, anchors and classes match
         else:
+            # 输出层每一个网格的channels数，比如（batch_size，13,13,3*（4+1+80））
             assert self.yolo_model.layers[-1].output_shape[-1] == \
                    num_anchors / len(self.yolo_model.output) * (num_classes + 5), \
                 'Mismatch between model and given anchor and class sizes'
@@ -128,7 +138,8 @@ class YOLO(object):
         # python是一种动态语言，self.yolo_model在之前的方法中被定义，在此可以引用？是的，实验证明可以的
         # 在__init__()中通过self.generate()定义了self.boxes, self.scores, self.classes，在此处就直接引用这些变量
         # 所以算法的主要部分就变成了self.generate()函数了
-        # 这个sess.run就运行了yolo网络对输入的image_data进行检测，输出box，score，classess结果
+        # 这个sess.run就运行了yolo网络对输入的image_data进行检测，输出box，score，classess结果，
+        # 其中box的结果是已经从416*416大小的图片映射到原始图片大小了。
         out_boxes, out_scores, out_classes = self.sess.run(
             [self.boxes, self.scores, self.classes],
             feed_dict={

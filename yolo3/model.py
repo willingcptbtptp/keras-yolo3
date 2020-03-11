@@ -223,7 +223,12 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
 
 
 def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
-    '''Get corrected boxes'''
+    '''
+    yolo实际上进行检测的图片大小是416*416的，但实际输入的并不是，
+    因此输入的图片首先会被填充128的灰度，再resize到416*416大小，最后再送入检测。
+    本函数则是将yolo获得的检测框映射到原始图片上
+    Get corrected boxes
+    '''
     box_yx = box_xy[..., ::-1]
     box_hw = box_wh[..., ::-1]
     input_shape = K.cast(input_shape, K.dtype(box_yx))

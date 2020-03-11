@@ -215,7 +215,8 @@ def data_generator(annotation_lines, batch_size, input_shape, anchors, num_class
     :param anchors: anchors组成的list
     :param num_classes:
     :return:返回一个tuple，yield类似于有记忆功能的return，没有加括号，返回多个值默认为tuple
-    返回值为：（[image_data, *y_true], np.zeros(batch_size)）
+    返回值为：（[image_data, *y_true], np.zeros(batch_size)）,其中[image_data, *y_true]表示输入数据，np.zeros(batch_size)表示label数据，
+             因为，这里对应的model是被设置为两个输入(图像数据，真实label数据)以及一个输出（loss结果）
     '''
     n = len(annotation_lines)
     i = 0
@@ -225,7 +226,8 @@ def data_generator(annotation_lines, batch_size, input_shape, anchors, num_class
         for b in range(batch_size):
             if i == 0:
                 np.random.shuffle(annotation_lines)
-            image, box = get_random_data(annotation_lines[i], input_shape, random=True) #读取指点图片的图像数据和box数据
+            # 读取指点图片的图像数据和box数据，这个label数据是已经resized到input_shape（416,416）大小的
+            image, box = get_random_data(annotation_lines[i], input_shape, random=True)
             image_data.append(image)
             box_data.append(box)
             i = (i + 1) % n # i在0-n之间循环，表示当前采集的样本序号
@@ -243,7 +245,8 @@ def data_generator_wrapper(annotation_lines, batch_size, input_shape, anchors, n
     :param input_shape:这里是416*416
     :param anchors: anchors组成的list
     :param num_classes:
-    :return:
+    :return:（[image_data, *y_true], np.zeros(batch_size)）,其中[image_data, *y_true]表示输入数据，np.zeros(batch_size)表示label数据，
+             因为，这里对应的model是被设置为两个输入(图像数据，真实label数据)以及一个输出（loss结果）
     '''
     n = len(annotation_lines)
     if n == 0 or batch_size <= 0: return None

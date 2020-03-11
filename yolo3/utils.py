@@ -49,7 +49,11 @@ def rand(a=0, b=1):
 
 def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jitter=.3, hue=.1, sat=1.5, val=1.5,
                     proc_img=True):
-    '''random preprocessing for real-time data augmentation'''
+    '''
+    从标注文件中读取数据，读取的box数据会用128的灰度填充短边，然后再热size到input_shape(416,416)大小
+    也就是说，yolo训练用的数据并不需要先resize到416的大小，会在训练的时候自动resize。
+    random preprocessing for real-time data augmentation
+    '''
     line = annotation_line.split()
     image = Image.open(line[0])
     iw, ih = image.size
@@ -67,7 +71,7 @@ def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jit
         if proc_img:
             image = image.resize((nw, nh), Image.BICUBIC)
             new_image = Image.new('RGB', (w, h), (128, 128, 128))
-            new_image.paste(image, (dx, dy))
+            new_image.paste(image, (dx, dy))    # 把image拷贝到new_image上，image的左上角点位于（dx，dy）这点
             image_data = np.array(new_image) / 255.
 
         # correct boxes

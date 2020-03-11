@@ -1,3 +1,11 @@
+# 这个文件是将VOC格式的标注文件生成一个yolo需要的标注文件，具体步骤如下：
+# 可以参考https://blog.csdn.net/u012746060/article/details/81183006
+#1.我们通过工具标注图片，生成的标注数据是一个voc格式的
+#2.我们需要随机采样生成四（一般就三个）个文件文本文件（类似于D:\data\VOC2007\ImageSets\Main中的文件），
+# 每个文件中表示训练/测试/验证等步骤对应的图片序号（这一步的代码不在本文件中）
+#3.读取步骤2中的文件，然后依次读取对应图片的标注文件（voc中标注文件是xml格式）
+# 然后得到三个真正用于yolo训练/测试/验证的标注文本文件，that all。
+
 import xml.etree.ElementTree as ET
 from os import getcwd
 
