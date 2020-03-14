@@ -96,7 +96,7 @@ def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jit
         nh = int(nw / new_ar)
     image = image.resize((nw, nh), Image.BICUBIC)
 
-    # place image
+    # place image，要求的图片416*416，这里把图片resize到最大边小于416的大小，然后在大小为416*416灰度为128的图片上随机覆盖缩小后图片
     dx = int(rand(0, w - nw))
     dy = int(rand(0, h - nh))
     new_image = Image.new('RGB', (w, h), (128, 128, 128))
@@ -107,11 +107,11 @@ def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jit
     flip = rand() < .5
     if flip: image = image.transpose(Image.FLIP_LEFT_RIGHT)
 
-    # distort image
+    # distort image，扭曲图片，好像是调整hsv的亮度对比度饱和度这些参数
     hue = rand(-hue, hue)
     sat = rand(1, sat) if rand() < .5 else 1 / rand(1, sat)
     val = rand(1, val) if rand() < .5 else 1 / rand(1, val)
-    x = rgb_to_hsv(np.array(image) / 255.)
+    x = rgb_to_hsv(np.array(image) / 255.)  #输入的rgb与输出的hsv都是[0,1]之间
     x[..., 0] += hue
     x[..., 0][x[..., 0] > 1] -= 1
     x[..., 0][x[..., 0] < 0] += 1

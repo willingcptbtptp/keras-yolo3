@@ -14,8 +14,8 @@ from yolo3.utils import get_random_data
 
 
 def _main():
-    annotation_path = 'train.txt'
-    log_dir = 'logs/000/'
+    annotation_path = '20200311_train.txt'   #源代码是'train.txt'
+    log_dir = 'logs/000/'   # 在keras-yolo3/下新建这个文件夹
     classes_path = 'model_data/voc_classes.txt'
     anchors_path = 'model_data/yolo_anchors.txt'
     class_names = get_classes(classes_path)
@@ -29,11 +29,11 @@ def _main():
     # 创建模型（并且可以加载预训练模型参数）
     if is_tiny_version:
         model = create_tiny_model(input_shape, anchors, num_classes,
-                                  freeze_body=2, weights_path='model_data/tiny_yolo_weights.h5')
+                                  freeze_body=2, weights_path='model_data/yolov3_tiny.h5')
     else:
         model = create_model(input_shape, anchors, num_classes,
                              freeze_body=2,
-                             weights_path='model_data/yolo_weights.h5')  # make sure you know what you freeze
+                             weights_path='model_data/yolov3.h5')  # make sure you know what you freeze
 
     # 记录训练的中间参数
     logging = TensorBoard(log_dir=log_dir)
@@ -68,14 +68,14 @@ def _main():
             # use custom yolo_loss Lambda layer.
             'yolo_loss': lambda y_true, y_pred: y_pred})
 
-        batch_size = 32
+        batch_size = 4     #源代码是32，为了减少内存使用，先改成4试试
         print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
         model.fit_generator(data_generator_wrapper(lines[:num_train], batch_size, input_shape, anchors, num_classes),
                             steps_per_epoch=max(1, num_train // batch_size),
                             validation_data=data_generator_wrapper(lines[num_train:], batch_size, input_shape, anchors,
                                                                    num_classes),
                             validation_steps=max(1, num_val // batch_size),
-                            epochs=50,
+                            epochs=500,  #源代码epoch是50，现在为了多训练一些改成500
                             initial_epoch=0,
                             callbacks=[logging, checkpoint])
         model.save_weights(log_dir + 'trained_weights_stage_1.h5')
@@ -83,7 +83,7 @@ def _main():
     # 不冻结网络权重的情况下，对整个网络训练
     # Unfreeze and continue training, to fine-tune.
     # Train longer if the result is not good.
-    if True:
+    if False:    #源代码是if True
         for i in range(len(model.layers)):
             model.layers[i].trainable = True
         model.compile(optimizer=Adam(lr=1e-4),
@@ -147,6 +147,13 @@ def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze
     y_true = [Input(shape=(h // {0: 32, 1: 16, 2: 8}[l], w // {0: 32, 1: 16, 2: 8}[l], \
                            num_anchors // 3, num_classes + 5)) for l in range(3)]
 
+    # 经过分析model的每一层结构，发现，yolov3模型在keras中一共有252层，从input到output分别为0-251
+    # 其中最后三层249,250,251分别表示最后三个conv2D卷积层，也就是输出层
+    # 240-248这九层，表示分别连接三个输出层的DBL层（conv2D-BN-Relu）,但是这九层是三层conv2D到三层BN到三层Relu
+    # 0-239则表示正常的从头到尾的yolo网络。
+    # 224层表示输出为52*52大小的那层concat
+    # 204层表示输出为26*26大小的那层concat
+    # 0-184层表示去除FC层的darknet53的网络
     model_body = yolo_body(image_input, num_anchors // 3, num_classes)
     print('Create YOLOv3 model with {} anchors and {} classes.'.format(num_anchors, num_classes))
 
@@ -155,6 +162,8 @@ def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze
         print('Load weights {}.'.format(weights_path))
         if freeze_body in [1, 2]:
             # Freeze darknet53 body or freeze all but 3 output layers.
+            # 由keras中网络结构可知，0-184层为darknet53去除fc层的主体部分，所以freeze_body==1表示冻结darknet53
+            # freeze_body==2表示冻结除了最后3个输出层（卷积层）外所有层
             num = (185, len(model_body.layers) - 3)[freeze_body - 1]
             for i in range(num): model_body.layers[i].trainable = False
             print('Freeze the first {} layers of total {} layers.'.format(num, len(model_body.layers)))
@@ -231,7 +240,7 @@ def data_generator(annotation_lines, batch_size, input_shape, anchors, num_class
             image_data.append(image)
             box_data.append(box)
             i = (i + 1) % n # i在0-n之间循环，表示当前采集的样本序号
-        image_data = np.array(image_data)
+        image_data = np.array(image_data)   # box_data和image_data每次加入batch_size个样本，然后生成网络需要的label y_true后清空
         box_data = np.array(box_data)
         y_true = preprocess_true_boxes(box_data, input_shape, anchors, num_classes)
         yield [image_data, *y_true], np.zeros(batch_size)

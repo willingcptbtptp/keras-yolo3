@@ -88,7 +88,7 @@ def make_last_layers(x, num_filters, out_filters):
     :param x:
     :param num_filters:
     :param out_filters: 输出层的特征图channel个数
-    :return:
+    :return:x,y 其中x是要引出去做concatenate然后输出的层，y是当前层的输出
     '''
     '''6 Conv2D_BN_Leaky layers followed by a Conv2D_linear layer'''
     x = compose(
@@ -109,7 +109,14 @@ def yolo_body(inputs, num_anchors, num_classes):
      :param inputs:输入层
     :param num_anchors:每一个输出层的anchors个数
     :param num_classes:类别个数
-    :return:返回一个keras定义的函数式模型，一个输入层，三个输出层
+    :return:返回一个keras定义的函数式模型，一个输入层，三个输出层，那么这个model在keras中是怎么存储的呢
+    经过分析model的每一层结构，发现，yolov3模型在keras中一共有252层，从input到output分别为0-251
+    其中最后三层249,250,251分别表示最后三个conv2D卷积层，也就是输出层
+    240-248这九层，表示分别连接三个输出层的DBL层（conv2D-BN-Relu）,但是这九层是三层conv2D到三层BN到三层Relu
+    0-239则表示正常的从头到尾的yolo网络。
+    224层表示输出为52*52大小的那层concat
+    204层表示输出为26*26大小的那层concat
+    0-184层表示去除FC层的darknet53的网络
     '''
     """Create YOLO_V3 model CNN body in Keras."""
     darknet = Model(inputs, darknet_body(inputs))
@@ -182,7 +189,12 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     :param calc_loss:是否计算loss
     :return: calc_loss关闭时输出正常的预测的box信息，
         if calc_loss == True:
-        return grid, feats, box_xy, box_wh  位置坐标是相对于整个原始图像左上角和wh的归一化后的坐标
+        return grid, feats, box_xy, box_wh
+        grid表示输出层grid每个cell的坐标
+        feats：表示网络的输出层，是网络的原始输出，参考yolov2的loss，也就是输出的是预测框的（tx,ty,tw,th,confidence,classes）
+        box_xy, box_wh:是处理之后的预测框坐标，相当于bx,by,bw,bh归一化之后的坐标
+                    表示坐标是相对于整个原始图像左上角和wh的归一化后的坐标
+        else
         return box_xy, box_wh, box_confidence, box_class_probs
     '''
     """Convert final layer features to bounding box parameters."""
@@ -199,7 +211,7 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
                     [grid_shape[0], 1, 1, 1])
     grid = K.concatenate([grid_x, grid_y])
 
-    # grid是数值为0~12的全遍历二元组，结构是(13, 13, 1, 2)
+    # grid是数值为0~12的全遍历二元组，表示输出层grid的坐标，如果输入的是最后一层网络的结果，则grid的结构是(13, 13, 1, 2)
     grid = K.cast(grid, K.dtype(feats))
 
     feats = K.reshape(
@@ -322,54 +334,59 @@ def yolo_eval(yolo_outputs,
 
 
 def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
-    '''Preprocess true boxes to training input format
-
-    Parameters
-    ----------
-    true_boxes: array, shape=(m, T, 5)
-        Absolute x_min, y_min, x_max, y_max, class_id relative to input_shape.
-    input_shape: array-like, hw, multiples of 32
-    anchors: array, shape=(N, 2), wh
-    num_classes: integer
-
-    Returns
-    -------
-    y_true: list of array, shape like yolo_outputs, xywh are reletive value
-
+    '''
+    Preprocess true boxes to training input format
+    把样本的GT数据转换成可以用于训练的数据？
+    :param true_boxes: 归一化到416*416大小后gt数据，nparray, shape=(batch_size, T, 5)，T是每张图GT的最大个数，
+            T为20，前面表示GT，后面用0填充
+            Absolute x_min, y_min, x_max, y_max, class_id relative to input_shape.
+    :param input_shape: 训练输入的图片大小（416,416），array-like, hw, multiples of 32
+    :param anchors: anchor list，array, shape=(N, 2), wh
+    :param num_classes: 类别个数integer
+    :return: 用于训练的标记gt数据。y_true: list of array, shape like yolo_outputs, xywh are reletive value
     '''
     assert (true_boxes[..., 4] < num_classes).all(), 'class id must be less than num_classes'
-    num_layers = len(anchors) // 3  # default setting
+    num_layers = len(anchors) // 3  # 输出层个数，default setting
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]] if num_layers == 3 else [[3, 4, 5], [1, 2, 3]]
 
     true_boxes = np.array(true_boxes, dtype='float32')
     input_shape = np.array(input_shape, dtype='int32')
-    boxes_xy = (true_boxes[..., 0:2] + true_boxes[..., 2:4]) // 2
-    boxes_wh = true_boxes[..., 2:4] - true_boxes[..., 0:2]
+    boxes_xy = (true_boxes[..., 0:2] + true_boxes[..., 2:4]) // 2   #box的中心坐标
+    boxes_wh = true_boxes[..., 2:4] - true_boxes[..., 0:2]  #box的wh
+
+    # 把true_boxes的box坐标有原来的（xmin,ymin,xmax,ymax）变成了（xcenter,ycenter,w,h）
+    # 并除以图片大小（416*416）进行归一化
     true_boxes[..., 0:2] = boxes_xy / input_shape[::-1]
     true_boxes[..., 2:4] = boxes_wh / input_shape[::-1]
 
-    m = true_boxes.shape[0]
+    m = true_boxes.shape[0] #batch_size
+
+    # grid_shapes是<class 'list'>，这个与yolo_loss（）函数中的grid_shapes是一样的
+    # 形状为[array([13, 13], dtype=int32), array([26, 26], dtype=int32), array([52, 52], dtype=int32)]
     grid_shapes = [input_shape // {0: 32, 1: 16, 2: 8}[l] for l in range(num_layers)]
+
+    # y_true应该就是要传入网络的label，是一个有三个数组的list，每个数组形状为
+    # (batch_size,13,13,3,8)，(batch_size,26,26,3,8)，(batch_size,52,52,3,8)
     y_true = [np.zeros((m, grid_shapes[l][0], grid_shapes[l][1], len(anchor_mask[l]), 5 + num_classes),
                        dtype='float32') for l in range(num_layers)]
 
     # Expand dim to apply broadcasting.
-    anchors = np.expand_dims(anchors, 0)
-    anchor_maxes = anchors / 2.
+    anchors = np.expand_dims(anchors, 0)    #把anchors数组从原来的的shape（9,2）变为（1,9,2）
+    anchor_maxes = anchors / 2. # anchors的值除以2，shape=(1,9,2)
     anchor_mins = -anchor_maxes
-    valid_mask = boxes_wh[..., 0] > 0
+    valid_mask = boxes_wh[..., 0] > 0   #boxes_wh[..., 0]是每一个gt的w数据，valid_mask是一个bool数组，表示GT不为0的序号
 
-    for b in range(m):
+    for b in range(m):#对序号为b的样本提取gt
         # Discard zero rows.
-        wh = boxes_wh[b, valid_mask[b]]
+        wh = boxes_wh[b, valid_mask[b]] #wh就是gt不是0的标注框的宽和高，shape=（gt_nums，2）
         if len(wh) == 0: continue
         # Expand dim to apply broadcasting.
-        wh = np.expand_dims(wh, -2)
-        box_maxes = wh / 2.
+        wh = np.expand_dims(wh, -2) #shape=(gt_nums,1,2)
+        box_maxes = wh / 2. #wh的值除以2，shape=（gt_nums,1,2）
         box_mins = -box_maxes
-
-        intersect_mins = np.maximum(box_mins, anchor_mins)
-        intersect_maxes = np.minimum(box_maxes, anchor_maxes)
+        # 这一段代码是假设anchor与gts中心点重合，然后计算每一个gt与每一个anchor的IOU，并找到与gt重合度最高的anchor
+        intersect_mins = np.maximum(box_mins, anchor_mins)  #np.maximum()是比较两数组返回最大值，如果数组形状不一样，则进行广播操作(broadcast)，本代码是形状为（3,1,2）和（1,9,2）比较后变为（3,9,2），3是gts的个数
+        intersect_maxes = np.minimum(box_maxes, anchor_maxes)#同上
         intersect_wh = np.maximum(intersect_maxes - intersect_mins, 0.)
         intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
         box_area = wh[..., 0] * wh[..., 1]
@@ -377,18 +394,31 @@ def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
         iou = intersect_area / (box_area + anchor_area - intersect_area)
 
         # Find best anchor for each true box
-        best_anchor = np.argmax(iou, axis=-1)
+        best_anchor = np.argmax(iou, axis=-1)   #np.argmax()返回最大值对应的序号，axis=-1表示从最后一个维度判断
 
-        for t, n in enumerate(best_anchor):
-            for l in range(num_layers):
+        # 下面的代码的意思大概是
+        # 首先根据gt所匹配的IOU最大的anchor得到best_anchor
+        # yolov3的每一个输出层匹配三个尺寸的anchor，根据best_anchor可以找到对应的输出层，也就是说每个gt只在某一个输出层有对应的预测结果
+        # 接着根据gt的坐标计算其左上角坐标在对应输出层的位置，例如某个gt为[0.31,0.50,0.43,0.62,0]5个值分别为xmin,ymin,xmax,ymax,class
+        # 则其best_anchor是序号为7的anchor，对应第一层输出也就是输出大小为13*13的那层，并根据gt的左上角坐标计算
+        # 得i=4,j=6
+        # k表示序号为7的anchor在当前输出层匹配的3个anchor（分别为序号为6,7,8）中的序号，因此k=1
+        # c表示类别序号，所以本gt的c=0
+
+        # 再来说一说y_true这个list是怎么赋值的
+        # y_true是有3个数组组成，其形状为[（32,13,13,3,8）,(32,26,26,3,8),(32,52,52,3,8)]分别表示（batch_size，output_size,output_size,anchor_num,4个坐标+1个置信度+3个类别）
+        # 还是以本gt举例。赋值的过程为，在y_true[l][b, j, i, k,...]的位置写上对应gt信息，注意这里j表示y坐标，i表示x坐标，
+        # 这里的ij对应的xy就是gt的中心，这与YOLOv3论文中说的是“目标的中心位于哪个grid，则就这个grid预测该目标”相符合
+        for t, n in enumerate(best_anchor): #t是当前样本图片（序号为b）的gt序号，n是其对应的best_anchor序号
+            for l in range(num_layers): # l是当前anchor应该由第l层输出层负责。第一层到第三输出层为分别为13*13，26*26,52*52
                 if n in anchor_mask[l]:
-                    i = np.floor(true_boxes[b, t, 0] * grid_shapes[l][1]).astype('int32')
-                    j = np.floor(true_boxes[b, t, 1] * grid_shapes[l][0]).astype('int32')
-                    k = anchor_mask[l].index(n)
-                    c = true_boxes[b, t, 4].astype('int32')
-                    y_true[l][b, j, i, k, 0:4] = true_boxes[b, t, 0:4]
-                    y_true[l][b, j, i, k, 4] = 1
-                    y_true[l][b, j, i, k, 5 + c] = 1
+                    i = np.floor(true_boxes[b, t, 0] * grid_shapes[l][1]).astype('int32')   # gt的xmin在对应输出层的坐标
+                    j = np.floor(true_boxes[b, t, 1] * grid_shapes[l][0]).astype('int32')   # gt的ymin在对应输出层的坐标
+                    k = anchor_mask[l].index(n) #best_anchor在当前输出层中三个anchors中的序号
+                    c = true_boxes[b, t, 4].astype('int32') #gt的类别
+                    y_true[l][b, j, i, k, 0:4] = true_boxes[b, t, 0:4]  #写上gt位置信息
+                    y_true[l][b, j, i, k, 4] = 1    # 写上gt的置信度信息，也就是有目标为1，无目标为0
+                    y_true[l][b, j, i, k, 5 + c] = 1    #写上类别信息，也就是对应类别为1，其他类别为0
 
     return y_true
 
@@ -459,7 +489,7 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     '''
     num_layers = len(anchors) // 3  # default setting
     yolo_outputs = args[:num_layers]  # 三个输出依次为[（None，13,13,255）,（None，26,26,255）,（None，52,52,255）]
-    y_true = args[num_layers:]  # 同yolo_outputs，也是一个长度为3的list
+    y_true = args[num_layers:]  # y_true是被当做一个输入层输入的，就是我们在处理gt生成可训练的label时生成的，同yolo_outputs，也是一个长度为3的list
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]] if num_layers == 3 else [[3, 4, 5], [1, 2, 3]]
     input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))  # 原始图片的大小
 
@@ -470,19 +500,38 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
 
     for l in range(num_layers):
-        object_mask = y_true[l][..., 4:5]  # 这个mask应该就是每一个anchor的置信度label
-        true_class_probs = y_true[l][..., 5:]
+        object_mask = y_true[l][..., 4:5]  # 这个mask就是三个输出层对应grid是否有对应的gt，也就是目标的置信度label
+        true_class_probs = y_true[l][..., 5:]   #每个grid对应的类别
 
+        # grid是第l层输出层cell的坐标，raw_pre是该输出层的原始数据，pred_xy, pred_wh则是raw_pre处理之后表示预测box坐标数据
+        # 网络原本的输出的结果参考YOLOv2的loss，网络原始输出的是tx,ty,tw,th,confidence，class
+        # 然后经过yolo_head（）处理之后，在训练的时候，对网络的输出做了如下的变化变为：
+        # 对于xy的值：经过sigmoid归一化，再加上相应的grid的二元组，得到bx,by,再除以网格边长，归一化
+        # 对于宽高wh：将feats中wh的值，经过exp正值化(也就是e的指数函数)，再乘以anchors_tensor的anchor box，得到bw，bh，再除以图片宽高，归一化，
+        #            wy和wh最后一步归一化的目的是把数据集中到（0,1）区间方便训练，在归一化之前得到的bx,by,bw.bh就是预测框真正的坐标
+        # 也就是说，网络直接输出的预测框结果是tx,ty,tw,th，经过yolo_head()处理后，得到bx,by,bw.bh归一化之后的预测框结果pred_xy, pred_wh，
+        # 我们的label是y_true中gt的位置是用输入图片大小416归一化后的（xmin,ymin,xmax,ymax）
         grid, raw_pred, pred_xy, pred_wh = yolo_head(yolo_outputs[l],
                                                      anchors[anchor_mask[l]], num_classes, input_shape, calc_loss=True)
         pred_box = K.concatenate([pred_xy, pred_wh])  # K.concatenate默认是将最后一个维度并联在一起
 
-        # Darknet raw box to calculate loss.
-        # 因为pred_xy, pred_wh都是相对于原始图片归一化后的坐标大小，
-        # 但下面的代码显示raw_true_xy，raw_true_wh不是相对于原始图片归一化后的大小
+        #  y_true[l][..., :2] * grid_shapes[l][::-1]的结果是grid中每一个cell对应gt的中心点坐标
+        #  所以raw_true_xy是sigmoid(tx)
+        # 这就有意思了，网络的预测值raw_pred中xy的值是tx，ty，而对应的label是sigmoid(tx)
+        # 我理解的是xy的loss采用K.binary_crossentropy（）也就是二元交叉熵来计算loss,这个公式会对预测值先做一个sigmoid处理
+        # 是的了！在预测confidence和class部分也用的K.binary_crossentropy（）函数计算loss
+        # 这就说明confidence和class的预测值也需要经过sigmoid之后才是真正的置信度和类别
+        # ！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
         raw_true_xy = y_true[l][..., :2] * grid_shapes[l][::-1] - grid
+
+        # y_true[l][..., 2:4]* input_shape[::-1]就是cell对应gt的wh，然后除以anchors[anchor_mask[l]]
+        # 也就是除以当前grid对应的三个anchor的wh，这样得到的就是bh/ph,然后取对数，得到的
+        # raw_true_wh是th和tw，之后的k.switch是防止log的值不存在，用0代替
+        # 这样网络的预测值raw_pred中wh的值是tw,th同时对应的label也是th和tw
         raw_true_wh = K.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1])
         raw_true_wh = K.switch(object_mask, raw_true_wh, K.zeros_like(raw_true_wh))  # avoid log(0)=-inf
+
+        # 乘机项是grid中保存的gt的w*h，表示面积越大其权重越低
         box_loss_scale = 2 - y_true[l][..., 2:3] * y_true[l][..., 3:4]
 
         # Find ignore mask, iterate over each of batch.
@@ -501,6 +550,8 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
         ignore_mask = K.expand_dims(ignore_mask, -1)
 
         # K.binary_crossentropy is helpful to avoid exp overflow.
+        # 注意计算loss用的predict数据还是raw_pred数据，也就是网络最原始的输出，而不是处理之后的pred_xy, pred_wh
+        # label则是y_true处理之后
         xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy, raw_pred[..., 0:2],
                                                                        from_logits=True)
         wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh - raw_pred[..., 2:4])

@@ -9,6 +9,7 @@
 import xml.etree.ElementTree as ET
 from os import getcwd
 
+# 这是源代码中的类别和数据集年份
 sets=[('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
 classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 
@@ -32,13 +33,14 @@ def convert_annotation(year, image_id, list_file):
     for obj in root.iter('object'):
         difficult = obj.find('difficult').text
         cls = obj.find('name').text
-        if cls not in my_classes or int(difficult)==1:
+        if cls not in my_classes or int(difficult)==1:  #源码中是从classe中读取类别信息
             continue
         cls_id = my_classes.index(cls)
         xmlbox = obj.find('bndbox')
         b = (int(xmlbox.find('xmin').text), int(xmlbox.find('ymin').text), int(xmlbox.find('xmax').text), int(xmlbox.find('ymax').text))
         list_file.write(" " + ",".join([str(a) for a in b]) + ',' + str(cls_id))
 
+# 这是源码中处理图片真实label的代码
 # wd = getcwd()
 #
 # for year, image_set in sets:
