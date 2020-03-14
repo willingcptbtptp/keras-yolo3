@@ -97,3 +97,22 @@ If you want to use original pretrained weights for YOLOv3:
 6. The training strategy is for reference only. Adjust it according to your dataset and your goal. And add further strategy if needed.
 
 7. For speeding up the training process with frozen layers train_bottleneck.py can be used. It will compute the bottleneck features of the frozen model first and then only trains the last layers. This makes training on CPU possible in a reasonable time. See [this](https://blog.keras.io/building-powerful-image-classification-models-using-very-little-data.html) for more information on bottleneck features.
+
+## How to Train
+下面介绍如何在自己的数据集上训练yolov3模型
+参考[链接](https://blog.csdn.net/u012746060/article/details/81183006)
+1.首先我们按照VOC格式准备准备数据集，例如我给自己的准备的数据集就是VOC20200311,其中包含了Annotations，ImageSets，JPEGImages，labels这四个传统的文件夹，并且也包含videoData（存放视频素材，图片素材就是截取其中的），mrconfig.xml（标注工具的配置文件），train.txt,test.txt（训练以及测试图片的相对路径）；
+
+2.采用标注工具标定图片，我才用的是MRLabeler-master软件，当然也可以采用大家常用的labelImg，标注工具会生成标注label。在Annotations文件夹为每一张标注图片生成一个xml后缀的label文件（包含文件路径，各个目标种类等详细信息），在labels中为每一个文件生成txt后缀的label文件（仅仅包含种类以及gt位置），同时会在ImageSets/Main/文件夹下生成四个文件train.txt,test.txt,trainval.txt,val.txt，他们中写入的是样本的序号，表示训练，验证，测试等对应的图片序号；
+
+3.修改并运行voc_annotation.py代码，生成本yolo代码可以使用的标注文件，分别为20200311_train.txt,20200311_test.txt,20200311_val.txt,20200311_trainval.txt,这些文件的每一行都表示一个样本图片的绝对路劲+gts的坐标和类别；
+
+4.**存疑，我觉得这一步没有必要！！**修改yolo3.cfg文件，在文件中国搜索“yolo”，共出现三处，每次都要修改附近的filters（最后一层卷积层个数），classes（输出类别），random（修改为0表示关闭多尺度训练）；
+
+5.修改voc_classes.txt（修改为自己的类别）和yolo_anchors（修改为自己聚类的anchors大小，也可以用原本的）
+
+6.修改train.py中标注数据的路径以及epoch等代码，开始训练。
+
+						
+		
+
